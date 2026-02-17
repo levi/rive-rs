@@ -1,0 +1,16 @@
+[package]
+name = "rive-rs"
+version = "0.1.0"
+edition = "2024"
+description = "Experimental Rust-side ABI contract for rive-runtime"
+license = "MIT"
+
+[lib]
+name = "rive_rs"
+path = "src/lib.rs"
+
+[features]
+default = []
+abi-contract-only = []
+
+[dependencies]
