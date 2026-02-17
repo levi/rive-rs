@@ -33,6 +33,7 @@ starting with `webgl2-rive-rs`.
 - Safe wrappers: `src/runtime.rs`
 - ABI notes: `ABI_CONTRACT.md`
 - Parity checklist: `PARITY_CHECKLIST.md`
+- Provider status: `ABI_PROVIDER_STATUS.md`
 
 ## Runtime submodule
 
@@ -45,3 +46,22 @@ Clone/update with:
 ```bash
 git submodule update --init --recursive
 ```
+
+## ABI provider scaffold
+
+`rive-rs` now includes an opt-in ABI provider scaffold that builds C/C++ exports:
+
+```bash
+cargo build --features runtime-abi-provider
+```
+
+Current scaffold status:
+
+- Core symbol provider is generated from `include/rive_rs_abi.h`
+- Implemented provider functions today:
+  - `rive_rs_abi_version`
+  - `rive_rs_factory_default/ref/unref` (using an internal no-op factory)
+  - `rive_rs_map_xy`
+  - `rive_rs_ptr_to*Asset` pointer helpers
+- All other ABI symbols compile as explicit `UNSUPPORTED` stubs for now and are
+  ready to be replaced incrementally with full `rive-runtime` implementations.

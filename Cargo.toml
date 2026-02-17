@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Experimental Rust-side ABI contract for rive-runtime"
 license = "MIT"
+build = "build.rs"
 
 [lib]
 name = "rive_rs"
@@ -12,5 +13,9 @@ path = "src/lib.rs"
 [features]
 default = []
 abi-contract-only = []
+runtime-abi-provider = []
 
 [dependencies]
+
+[build-dependencies]
+cc = "1.1"
