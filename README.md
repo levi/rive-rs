@@ -23,8 +23,8 @@ starting with `webgl2-rive-rs`.
 
 - Core `bindings.cpp` runtime-surface parity completed at the contract level
 - Safe Rust wrapper parity completed for the same core surface area
-- Runtime ABI provider implementation is integration-specific and can be
-  implemented separately against `rive-runtime`
+- Runtime ABI provider implementation now lives in this repo behind
+  `runtime-abi-provider`
 
 ## Main files
 
@@ -47,21 +47,30 @@ Clone/update with:
 git submodule update --init --recursive
 ```
 
-## ABI provider scaffold
+## ABI provider
 
-`rive-rs` now includes an opt-in ABI provider scaffold that builds C/C++ exports:
+`rive-rs` includes an opt-in ABI provider that builds C/C++ exports:
 
 ```bash
 cargo build --features runtime-abi-provider
 ```
 
-Current scaffold status:
+Current provider status:
 
-- Core symbol provider is generated from `include/rive_rs_abi.h`
-- Implemented provider functions today:
-  - `rive_rs_abi_version`
-  - `rive_rs_factory_default/ref/unref` (using an internal no-op factory)
-  - `rive_rs_map_xy`
-  - `rive_rs_ptr_to*Asset` pointer helpers
-- All other ABI symbols compile as explicit `UNSUPPORTED` stubs for now and are
-  ready to be replaced incrementally with full `rive-runtime` implementations.
+- All `RIVE_RS_API` symbols in `include/rive_rs_abi.h` are implemented in
+  `cpp/provider_core.cpp`
+- No generated ABI stubs are used
+- `FlattenedPath` APIs are gated by `ENABLE_QUERY_FLAT_VERTICES` in
+  `rive-runtime` (unsupported when that macro is off)
+
+## Tests
+
+- Default:
+  - `cargo check`
+  - `cargo test`
+- Provider-enabled:
+  - `cargo check --features runtime-abi-provider`
+  - `cargo test --features runtime-abi-provider`
+- Provider + runtime smoke/lifetime/callback-asset coverage:
+  - `cargo check --features \"runtime-abi-provider runtime-abi-provider-tests\"`
+  - `cargo test --features \"runtime-abi-provider runtime-abi-provider-tests\"`

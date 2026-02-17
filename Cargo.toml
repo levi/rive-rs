@@ -14,8 +14,12 @@ path = "src/lib.rs"
 default = []
 abi-contract-only = []
 runtime-abi-provider = []
+runtime-abi-provider-tests = []
 
 [dependencies]
 
 [build-dependencies]
 cc = "1.1"
+
+[dev-dependencies]
+regex = "1.11"

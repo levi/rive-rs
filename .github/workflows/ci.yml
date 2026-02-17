@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  cargo:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            features: ""
+          - name: runtime-abi-provider
+            features: "runtime-abi-provider"
+          - name: runtime-abi-provider-tests
+            features: "runtime-abi-provider runtime-abi-provider-tests"
+
+    name: cargo (${{ matrix.name }})
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo check (default)
+        if: matrix.features == ''
+        run: cargo check
+
+      - name: Cargo check (features)
+        if: matrix.features != ''
+        run: cargo check --features "${{ matrix.features }}"
+
+      - name: Cargo test (default)
+        if: matrix.features == ''
+        run: cargo test
+
+      - name: Cargo test (features)
+        if: matrix.features != ''
+        run: cargo test --features "${{ matrix.features }}"
