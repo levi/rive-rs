@@ -59,6 +59,16 @@ pub struct rive_rs_renderer {
 }
 
 #[repr(C)]
+pub struct rive_rs_webgl2_renderer {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
+pub struct rive_rs_webgpu_renderer {
+    _private: [u8; 0],
+}
+
+#[repr(C)]
 pub struct rive_rs_linear_animation {
     _private: [u8; 0],
 }
@@ -268,6 +278,8 @@ unsafe extern "C" {
     pub fn rive_rs_abi_version() -> u32;
 
     pub fn rive_rs_factory_default() -> *mut rive_rs_factory;
+    pub fn rive_rs_factory_webgl2() -> *mut rive_rs_factory;
+    pub fn rive_rs_factory_webgpu() -> *mut rive_rs_factory;
     pub fn rive_rs_factory_ref(factory: *mut rive_rs_factory);
     pub fn rive_rs_factory_unref(factory: *mut rive_rs_factory);
 
@@ -355,6 +367,14 @@ unsafe extern "C" {
     pub fn rive_rs_artboard_draw(
         artboard: *mut rive_rs_artboard,
         renderer: *mut rive_rs_renderer,
+    ) -> rive_rs_status;
+    pub fn rive_rs_artboard_draw_webgl2(
+        artboard: *mut rive_rs_artboard,
+        renderer: *mut rive_rs_webgl2_renderer,
+    ) -> rive_rs_status;
+    pub fn rive_rs_artboard_draw_webgpu(
+        artboard: *mut rive_rs_artboard,
+        renderer: *mut rive_rs_webgpu_renderer,
     ) -> rive_rs_status;
     pub fn rive_rs_artboard_did_change(artboard: *const rive_rs_artboard) -> bool;
     pub fn rive_rs_artboard_name(artboard: *const rive_rs_artboard) -> rive_rs_str_view;
@@ -477,6 +497,94 @@ unsafe extern "C" {
     pub fn rive_rs_artboard_bind_view_model_instance(
         artboard: *mut rive_rs_artboard,
         instance: *mut rive_rs_view_model_instance,
+    ) -> rive_rs_status;
+
+    pub fn rive_rs_webgl2_renderer_new(
+        width: i32,
+        height: i32,
+        out_renderer: *mut *mut rive_rs_webgl2_renderer,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_delete(renderer: *mut rive_rs_webgl2_renderer);
+    pub fn rive_rs_webgl2_renderer_clear(renderer: *mut rive_rs_webgl2_renderer) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_flush(renderer: *mut rive_rs_webgl2_renderer) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_resize(
+        renderer: *mut rive_rs_webgl2_renderer,
+        width: i32,
+        height: i32,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_save(renderer: *mut rive_rs_webgl2_renderer) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_restore(
+        renderer: *mut rive_rs_webgl2_renderer,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_transform(
+        renderer: *mut rive_rs_webgl2_renderer,
+        matrix: *const rive_rs_mat2d,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_modulate_opacity(
+        renderer: *mut rive_rs_webgl2_renderer,
+        opacity: f32,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_align(
+        renderer: *mut rive_rs_webgl2_renderer,
+        fit: rive_rs_fit,
+        alignment: rive_rs_alignment,
+        frame: *const rive_rs_aabb,
+        content: *const rive_rs_aabb,
+        scale_factor: f32,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_save_clip_rect(
+        renderer: *mut rive_rs_webgl2_renderer,
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgl2_renderer_restore_clip_rect(
+        renderer: *mut rive_rs_webgl2_renderer,
+    ) -> rive_rs_status;
+
+    pub fn rive_rs_webgpu_renderer_new(
+        width: i32,
+        height: i32,
+        out_renderer: *mut *mut rive_rs_webgpu_renderer,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_delete(renderer: *mut rive_rs_webgpu_renderer);
+    pub fn rive_rs_webgpu_renderer_clear(renderer: *mut rive_rs_webgpu_renderer) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_flush(renderer: *mut rive_rs_webgpu_renderer) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_resize(
+        renderer: *mut rive_rs_webgpu_renderer,
+        width: i32,
+        height: i32,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_save(renderer: *mut rive_rs_webgpu_renderer) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_restore(
+        renderer: *mut rive_rs_webgpu_renderer,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_transform(
+        renderer: *mut rive_rs_webgpu_renderer,
+        matrix: *const rive_rs_mat2d,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_modulate_opacity(
+        renderer: *mut rive_rs_webgpu_renderer,
+        opacity: f32,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_align(
+        renderer: *mut rive_rs_webgpu_renderer,
+        fit: rive_rs_fit,
+        alignment: rive_rs_alignment,
+        frame: *const rive_rs_aabb,
+        content: *const rive_rs_aabb,
+        scale_factor: f32,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_save_clip_rect(
+        renderer: *mut rive_rs_webgpu_renderer,
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    ) -> rive_rs_status;
+    pub fn rive_rs_webgpu_renderer_restore_clip_rect(
+        renderer: *mut rive_rs_webgpu_renderer,
     ) -> rive_rs_status;
     pub fn rive_rs_bindable_artboard_ref(bindable_artboard: *mut rive_rs_bindable_artboard);
     pub fn rive_rs_bindable_artboard_unref(bindable_artboard: *mut rive_rs_bindable_artboard);

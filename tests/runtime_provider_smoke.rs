@@ -6,7 +6,8 @@
 use rive_rs::abi;
 use rive_rs::{
     Aabb, Alignment, DataType, Factory, FileAssetLoaderCallbacks, Fit, LinearAnimationInstance,
-    SmiInputType, StateMachineInstance, Vec2, compute_alignment, map_xy,
+    Mat2D, SmiInputType, StateMachineInstance, Vec2, WebGl2Renderer, WebGpuRenderer,
+    compute_alignment, map_xy,
 };
 use std::ffi::c_void;
 use std::fs;
@@ -369,6 +370,73 @@ fn invalid_media_decode_returns_error() -> Result<(), Box<dyn std::error::Error>
 
     assert!(factory.decode_audio(b"not-a-valid-audio-payload").is_err());
     assert!(factory.decode_font(b"not-a-valid-font-payload").is_err());
+
+    Ok(())
+}
+
+#[test]
+fn web_renderer_api_smoke() -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = asset_bytes("smi_test.riv");
+    let frame = Aabb {
+        min_x: 0.0,
+        min_y: 0.0,
+        max_x: 512.0,
+        max_y: 512.0,
+    };
+    let identity = Mat2D {
+        xx: 1.0,
+        xy: 0.0,
+        yx: 0.0,
+        yy: 1.0,
+        tx: 0.0,
+        ty: 0.0,
+    };
+
+    let factory_gl = Factory::new_webgl2()?;
+    let file_gl = factory_gl.load_file(&bytes)?;
+    let mut artboard_gl = file_gl.default_artboard()?;
+    let content_gl = artboard_gl.bounds();
+    let mut renderer_gl = WebGl2Renderer::new(512, 512)?;
+    renderer_gl.clear()?;
+    renderer_gl.resize(512, 512)?;
+    renderer_gl.save()?;
+    renderer_gl.transform(&identity)?;
+    renderer_gl.modulate_opacity(1.0)?;
+    renderer_gl.align(
+        Fit::RIVE_RS_FIT_CONTAIN,
+        Alignment::RIVE_RS_ALIGNMENT_CENTER,
+        &frame,
+        &content_gl,
+        1.0,
+    )?;
+    renderer_gl.save_clip_rect(0.0, 0.0, 512.0, 512.0)?;
+    artboard_gl.draw_webgl2(&mut renderer_gl)?;
+    renderer_gl.restore_clip_rect()?;
+    renderer_gl.restore()?;
+    renderer_gl.flush()?;
+
+    let factory_wgpu = Factory::new_webgpu()?;
+    let file_wgpu = factory_wgpu.load_file(&bytes)?;
+    let mut artboard_wgpu = file_wgpu.default_artboard()?;
+    let content_wgpu = artboard_wgpu.bounds();
+    let mut renderer_wgpu = WebGpuRenderer::new(512, 512)?;
+    renderer_wgpu.clear()?;
+    renderer_wgpu.resize(512, 512)?;
+    renderer_wgpu.save()?;
+    renderer_wgpu.transform(&identity)?;
+    renderer_wgpu.modulate_opacity(1.0)?;
+    renderer_wgpu.align(
+        Fit::RIVE_RS_FIT_CONTAIN,
+        Alignment::RIVE_RS_ALIGNMENT_CENTER,
+        &frame,
+        &content_wgpu,
+        1.0,
+    )?;
+    renderer_wgpu.save_clip_rect(0.0, 0.0, 512.0, 512.0)?;
+    artboard_wgpu.draw_webgpu(&mut renderer_wgpu)?;
+    renderer_wgpu.restore_clip_rect()?;
+    renderer_wgpu.restore()?;
+    renderer_wgpu.flush()?;
 
     Ok(())
 }

@@ -184,6 +184,22 @@ impl Factory {
         })
     }
 
+    pub fn new_webgl2() -> Result<Self, Error> {
+        // SAFETY: FFI constructor with no arguments.
+        let raw = unsafe { abi::rive_rs_factory_webgl2() };
+        let raw = NonNull::new(raw)
+            .ok_or_else(|| Error::from_status(Status::RIVE_RS_STATUS_UNSUPPORTED))?;
+        Ok(Self { raw })
+    }
+
+    pub fn new_webgpu() -> Result<Self, Error> {
+        // SAFETY: FFI constructor with no arguments.
+        let raw = unsafe { abi::rive_rs_factory_webgpu() };
+        let raw = NonNull::new(raw)
+            .ok_or_else(|| Error::from_status(Status::RIVE_RS_STATUS_UNSUPPORTED))?;
+        Ok(Self { raw })
+    }
+
     pub fn as_raw(&self) -> *mut abi::rive_rs_factory {
         self.raw.as_ptr()
     }
@@ -488,6 +504,18 @@ impl Artboard {
         }
         // SAFETY: valid pointers for call duration.
         let status = unsafe { abi::rive_rs_artboard_draw(self.as_raw(), renderer) };
+        status_result(status)
+    }
+
+    pub fn draw_webgl2(&mut self, renderer: &mut WebGl2Renderer) -> Result<(), Error> {
+        // SAFETY: valid handles for call duration.
+        let status = unsafe { abi::rive_rs_artboard_draw_webgl2(self.as_raw(), renderer.as_raw()) };
+        status_result(status)
+    }
+
+    pub fn draw_webgpu(&mut self, renderer: &mut WebGpuRenderer) -> Result<(), Error> {
+        // SAFETY: valid handles for call duration.
+        let status = unsafe { abi::rive_rs_artboard_draw_webgpu(self.as_raw(), renderer.as_raw()) };
         status_result(status)
     }
 
@@ -852,6 +880,228 @@ impl Drop for Artboard {
     fn drop(&mut self) {
         // SAFETY: intrusive ref-count decrement on valid handle.
         unsafe { abi::rive_rs_artboard_unref(self.as_raw()) };
+    }
+}
+
+pub struct WebGl2Renderer {
+    raw: NonNull<abi::rive_rs_webgl2_renderer>,
+}
+
+impl WebGl2Renderer {
+    pub fn new(width: i32, height: i32) -> Result<Self, Error> {
+        let mut out = ptr::null_mut();
+        // SAFETY: out pointer is valid for call duration.
+        let status = unsafe { abi::rive_rs_webgl2_renderer_new(width, height, &mut out) };
+        status_result(status)?;
+        Ok(Self {
+            raw: non_null(out)?,
+        })
+    }
+
+    pub fn as_raw(&self) -> *mut abi::rive_rs_webgl2_renderer {
+        self.raw.as_ptr()
+    }
+
+    pub fn clear(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgl2_renderer_clear(self.as_raw()) };
+        status_result(status)
+    }
+
+    pub fn flush(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgl2_renderer_flush(self.as_raw()) };
+        status_result(status)
+    }
+
+    pub fn resize(&mut self, width: i32, height: i32) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgl2_renderer_resize(self.as_raw(), width, height) };
+        status_result(status)
+    }
+
+    pub fn save(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgl2_renderer_save(self.as_raw()) };
+        status_result(status)
+    }
+
+    pub fn restore(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgl2_renderer_restore(self.as_raw()) };
+        status_result(status)
+    }
+
+    pub fn transform(&mut self, matrix: &Mat2D) -> Result<(), Error> {
+        // SAFETY: valid pointers for call duration.
+        let status = unsafe { abi::rive_rs_webgl2_renderer_transform(self.as_raw(), matrix) };
+        status_result(status)
+    }
+
+    pub fn modulate_opacity(&mut self, opacity: f32) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgl2_renderer_modulate_opacity(self.as_raw(), opacity) };
+        status_result(status)
+    }
+
+    pub fn align(
+        &mut self,
+        fit: Fit,
+        alignment: Alignment,
+        frame: &Aabb,
+        content: &Aabb,
+        scale_factor: f32,
+    ) -> Result<(), Error> {
+        // SAFETY: valid pointers for call duration.
+        let status = unsafe {
+            abi::rive_rs_webgl2_renderer_align(
+                self.as_raw(),
+                fit,
+                alignment,
+                frame,
+                content,
+                scale_factor,
+            )
+        };
+        status_result(status)
+    }
+
+    pub fn save_clip_rect(
+        &mut self,
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    ) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe {
+            abi::rive_rs_webgl2_renderer_save_clip_rect(self.as_raw(), left, top, right, bottom)
+        };
+        status_result(status)
+    }
+
+    pub fn restore_clip_rect(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgl2_renderer_restore_clip_rect(self.as_raw()) };
+        status_result(status)
+    }
+}
+
+impl Drop for WebGl2Renderer {
+    fn drop(&mut self) {
+        // SAFETY: valid handle.
+        unsafe { abi::rive_rs_webgl2_renderer_delete(self.as_raw()) };
+    }
+}
+
+pub struct WebGpuRenderer {
+    raw: NonNull<abi::rive_rs_webgpu_renderer>,
+}
+
+impl WebGpuRenderer {
+    pub fn new(width: i32, height: i32) -> Result<Self, Error> {
+        let mut out = ptr::null_mut();
+        // SAFETY: out pointer is valid for call duration.
+        let status = unsafe { abi::rive_rs_webgpu_renderer_new(width, height, &mut out) };
+        status_result(status)?;
+        Ok(Self {
+            raw: non_null(out)?,
+        })
+    }
+
+    pub fn as_raw(&self) -> *mut abi::rive_rs_webgpu_renderer {
+        self.raw.as_ptr()
+    }
+
+    pub fn clear(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgpu_renderer_clear(self.as_raw()) };
+        status_result(status)
+    }
+
+    pub fn flush(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgpu_renderer_flush(self.as_raw()) };
+        status_result(status)
+    }
+
+    pub fn resize(&mut self, width: i32, height: i32) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgpu_renderer_resize(self.as_raw(), width, height) };
+        status_result(status)
+    }
+
+    pub fn save(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgpu_renderer_save(self.as_raw()) };
+        status_result(status)
+    }
+
+    pub fn restore(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgpu_renderer_restore(self.as_raw()) };
+        status_result(status)
+    }
+
+    pub fn transform(&mut self, matrix: &Mat2D) -> Result<(), Error> {
+        // SAFETY: valid pointers for call duration.
+        let status = unsafe { abi::rive_rs_webgpu_renderer_transform(self.as_raw(), matrix) };
+        status_result(status)
+    }
+
+    pub fn modulate_opacity(&mut self, opacity: f32) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgpu_renderer_modulate_opacity(self.as_raw(), opacity) };
+        status_result(status)
+    }
+
+    pub fn align(
+        &mut self,
+        fit: Fit,
+        alignment: Alignment,
+        frame: &Aabb,
+        content: &Aabb,
+        scale_factor: f32,
+    ) -> Result<(), Error> {
+        // SAFETY: valid pointers for call duration.
+        let status = unsafe {
+            abi::rive_rs_webgpu_renderer_align(
+                self.as_raw(),
+                fit,
+                alignment,
+                frame,
+                content,
+                scale_factor,
+            )
+        };
+        status_result(status)
+    }
+
+    pub fn save_clip_rect(
+        &mut self,
+        left: f32,
+        top: f32,
+        right: f32,
+        bottom: f32,
+    ) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe {
+            abi::rive_rs_webgpu_renderer_save_clip_rect(self.as_raw(), left, top, right, bottom)
+        };
+        status_result(status)
+    }
+
+    pub fn restore_clip_rect(&mut self) -> Result<(), Error> {
+        // SAFETY: valid handle.
+        let status = unsafe { abi::rive_rs_webgpu_renderer_restore_clip_rect(self.as_raw()) };
+        status_result(status)
+    }
+}
+
+impl Drop for WebGpuRenderer {
+    fn drop(&mut self) {
+        // SAFETY: valid handle.
+        unsafe { abi::rive_rs_webgpu_renderer_delete(self.as_raw()) };
     }
 }
 

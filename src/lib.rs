@@ -43,6 +43,8 @@ pub use runtime::TransformComponentHandle;
 pub use runtime::Vec2;
 pub use runtime::ViewModel;
 pub use runtime::ViewModelInstance;
+pub use runtime::WebGl2Renderer;
+pub use runtime::WebGpuRenderer;
 pub use runtime::abi_version;
 pub use runtime::compute_alignment;
 pub use runtime::map_xy;

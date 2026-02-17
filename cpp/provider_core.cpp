@@ -42,6 +42,7 @@
 #include "rive/text/text_value_run.hpp"
 #include "rive/text_engine.hpp"
 #include "rive/transform_component.hpp"
+#include "utils/no_op_renderer.hpp"
 #include "rive/viewmodel/runtime/viewmodel_instance_artboard_runtime.hpp"
 #include "rive/viewmodel/runtime/viewmodel_instance_boolean_runtime.hpp"
 #include "rive/viewmodel/runtime/viewmodel_instance_color_runtime.hpp"
@@ -55,6 +56,7 @@
 #include "rive/viewmodel/runtime/viewmodel_runtime.hpp"
 
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -74,6 +76,28 @@ struct rive_rs_artboard
 {
     std::atomic_uint32_t refs;
     std::unique_ptr<rive::ArtboardInstance> artboard;
+};
+
+struct rive_rs_webgl2_renderer
+{
+    int32_t width = 0;
+    int32_t height = 0;
+    uint64_t frame_id = 0;
+    uint32_t save_depth = 0;
+    uint32_t clip_depth = 0;
+    float opacity = 1.0f;
+    rive::NoOpRenderer renderer;
+};
+
+struct rive_rs_webgpu_renderer
+{
+    int32_t width = 0;
+    int32_t height = 0;
+    uint64_t frame_id = 0;
+    uint32_t save_depth = 0;
+    uint32_t clip_depth = 0;
+    float opacity = 1.0f;
+    rive::NoOpRenderer renderer;
 };
 
 namespace
@@ -630,6 +654,191 @@ inline bool to_runtime_alignment(rive_rs_alignment alignment,
     }
 }
 
+template <typename RendererHandle>
+inline rive_rs_status renderer_new_impl(int32_t width,
+                                        int32_t height,
+                                        RendererHandle** out_renderer)
+{
+    if (out_renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    *out_renderer = nullptr;
+    if (width <= 0 || height <= 0)
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+    auto* handle = new (std::nothrow) RendererHandle();
+    if (handle == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    handle->width = width;
+    handle->height = height;
+    *out_renderer = handle;
+    return RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_clear_impl(RendererHandle* renderer)
+{
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    renderer->frame_id++;
+    return RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_flush_impl(RendererHandle* renderer)
+{
+    return renderer == nullptr ? RIVE_RS_STATUS_NULL : RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_resize_impl(RendererHandle* renderer,
+                                           int32_t width,
+                                           int32_t height)
+{
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (width <= 0 || height <= 0)
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+    renderer->width = width;
+    renderer->height = height;
+    return RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_save_impl(RendererHandle* renderer)
+{
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    renderer->save_depth++;
+    return RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_restore_impl(RendererHandle* renderer)
+{
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (renderer->save_depth == 0)
+    {
+        return RIVE_RS_STATUS_OUT_OF_RANGE;
+    }
+    renderer->save_depth--;
+    return RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_transform_impl(RendererHandle* renderer,
+                                              const rive_rs_mat2d* matrix)
+{
+    if (renderer == nullptr || matrix == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    return RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_modulate_opacity_impl(RendererHandle* renderer,
+                                                     float opacity)
+{
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (!std::isfinite(opacity))
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+    renderer->opacity = std::fmax(0.0f, std::fmin(1.0f, renderer->opacity * opacity));
+    return RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_align_impl(RendererHandle* renderer,
+                                          rive_rs_fit fit,
+                                          rive_rs_alignment alignment,
+                                          const rive_rs_aabb* frame,
+                                          const rive_rs_aabb* content,
+                                          float scale_factor)
+{
+    if (renderer == nullptr || frame == nullptr || content == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (!std::isfinite(scale_factor))
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+    rive::Fit runtime_fit;
+    rive::Alignment runtime_alignment;
+    if (!to_runtime_fit(fit, &runtime_fit) ||
+        !to_runtime_alignment(alignment, &runtime_alignment))
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+    auto matrix = rive::computeAlignment(runtime_fit,
+                                         runtime_alignment,
+                                         to_runtime_aabb(*frame),
+                                         to_runtime_aabb(*content),
+                                         scale_factor);
+    (void)matrix;
+    return RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_save_clip_rect_impl(RendererHandle* renderer,
+                                                   float left,
+                                                   float top,
+                                                   float right,
+                                                   float bottom)
+{
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (!std::isfinite(left) || !std::isfinite(top) || !std::isfinite(right) ||
+        !std::isfinite(bottom))
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+    auto status = renderer_save_impl(renderer);
+    if (status != RIVE_RS_STATUS_OK)
+    {
+        return status;
+    }
+    renderer->clip_depth++;
+    return RIVE_RS_STATUS_OK;
+}
+
+template <typename RendererHandle>
+inline rive_rs_status renderer_restore_clip_rect_impl(RendererHandle* renderer)
+{
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (renderer->clip_depth == 0)
+    {
+        return RIVE_RS_STATUS_OUT_OF_RANGE;
+    }
+    renderer->clip_depth--;
+    return renderer_restore_impl(renderer);
+}
+
 inline rive_rs_status import_result_to_status(rive::ImportResult result)
 {
     switch (result)
@@ -886,6 +1095,16 @@ rive_rs_factory* rive_rs_factory_default(void)
     handle->refs.store(1, std::memory_order_relaxed);
     handle->factory = factory;
     return handle;
+}
+
+rive_rs_factory* rive_rs_factory_webgl2(void)
+{
+    return rive_rs_factory_default();
+}
+
+rive_rs_factory* rive_rs_factory_webgpu(void)
+{
+    return rive_rs_factory_default();
 }
 
 void rive_rs_factory_ref(rive_rs_factory* factory) { factory_ref_internal(factory); }
@@ -1402,6 +1621,28 @@ rive_rs_status rive_rs_artboard_draw(rive_rs_artboard* artboard,
     }
 
     as_artboard(artboard)->draw(reinterpret_cast<rive::Renderer*>(renderer));
+    return RIVE_RS_STATUS_OK;
+}
+
+rive_rs_status rive_rs_artboard_draw_webgl2(rive_rs_artboard* artboard,
+                                            rive_rs_webgl2_renderer* renderer)
+{
+    if (artboard == nullptr || renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    as_artboard(artboard)->draw(&renderer->renderer);
+    return RIVE_RS_STATUS_OK;
+}
+
+rive_rs_status rive_rs_artboard_draw_webgpu(rive_rs_artboard* artboard,
+                                            rive_rs_webgpu_renderer* renderer)
+{
+    if (artboard == nullptr || renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    as_artboard(artboard)->draw(&renderer->renderer);
     return RIVE_RS_STATUS_OK;
 }
 
@@ -1948,6 +2189,156 @@ rive_rs_status rive_rs_artboard_bind_view_model_instance(
                                    : as_view_model_instance(instance)->instance();
     as_artboard(artboard)->bindViewModelInstance(view_model_instance);
     return RIVE_RS_STATUS_OK;
+}
+
+rive_rs_status rive_rs_webgl2_renderer_new(int32_t width,
+                                           int32_t height,
+                                           rive_rs_webgl2_renderer** out_renderer)
+{
+    return renderer_new_impl(width, height, out_renderer);
+}
+
+void rive_rs_webgl2_renderer_delete(rive_rs_webgl2_renderer* renderer)
+{
+    delete renderer;
+}
+
+rive_rs_status rive_rs_webgl2_renderer_clear(rive_rs_webgl2_renderer* renderer)
+{
+    return renderer_clear_impl(renderer);
+}
+
+rive_rs_status rive_rs_webgl2_renderer_flush(rive_rs_webgl2_renderer* renderer)
+{
+    return renderer_flush_impl(renderer);
+}
+
+rive_rs_status rive_rs_webgl2_renderer_resize(rive_rs_webgl2_renderer* renderer,
+                                              int32_t width,
+                                              int32_t height)
+{
+    return renderer_resize_impl(renderer, width, height);
+}
+
+rive_rs_status rive_rs_webgl2_renderer_save(rive_rs_webgl2_renderer* renderer)
+{
+    return renderer_save_impl(renderer);
+}
+
+rive_rs_status rive_rs_webgl2_renderer_restore(rive_rs_webgl2_renderer* renderer)
+{
+    return renderer_restore_impl(renderer);
+}
+
+rive_rs_status rive_rs_webgl2_renderer_transform(rive_rs_webgl2_renderer* renderer,
+                                                 const rive_rs_mat2d* matrix)
+{
+    return renderer_transform_impl(renderer, matrix);
+}
+
+rive_rs_status rive_rs_webgl2_renderer_modulate_opacity(rive_rs_webgl2_renderer* renderer,
+                                                        float opacity)
+{
+    return renderer_modulate_opacity_impl(renderer, opacity);
+}
+
+rive_rs_status rive_rs_webgl2_renderer_align(rive_rs_webgl2_renderer* renderer,
+                                             rive_rs_fit fit,
+                                             rive_rs_alignment alignment,
+                                             const rive_rs_aabb* frame,
+                                             const rive_rs_aabb* content,
+                                             float scale_factor)
+{
+    return renderer_align_impl(renderer, fit, alignment, frame, content, scale_factor);
+}
+
+rive_rs_status rive_rs_webgl2_renderer_save_clip_rect(rive_rs_webgl2_renderer* renderer,
+                                                      float left,
+                                                      float top,
+                                                      float right,
+                                                      float bottom)
+{
+    return renderer_save_clip_rect_impl(renderer, left, top, right, bottom);
+}
+
+rive_rs_status rive_rs_webgl2_renderer_restore_clip_rect(rive_rs_webgl2_renderer* renderer)
+{
+    return renderer_restore_clip_rect_impl(renderer);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_new(int32_t width,
+                                           int32_t height,
+                                           rive_rs_webgpu_renderer** out_renderer)
+{
+    return renderer_new_impl(width, height, out_renderer);
+}
+
+void rive_rs_webgpu_renderer_delete(rive_rs_webgpu_renderer* renderer)
+{
+    delete renderer;
+}
+
+rive_rs_status rive_rs_webgpu_renderer_clear(rive_rs_webgpu_renderer* renderer)
+{
+    return renderer_clear_impl(renderer);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_flush(rive_rs_webgpu_renderer* renderer)
+{
+    return renderer_flush_impl(renderer);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_resize(rive_rs_webgpu_renderer* renderer,
+                                              int32_t width,
+                                              int32_t height)
+{
+    return renderer_resize_impl(renderer, width, height);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_save(rive_rs_webgpu_renderer* renderer)
+{
+    return renderer_save_impl(renderer);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_restore(rive_rs_webgpu_renderer* renderer)
+{
+    return renderer_restore_impl(renderer);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_transform(rive_rs_webgpu_renderer* renderer,
+                                                 const rive_rs_mat2d* matrix)
+{
+    return renderer_transform_impl(renderer, matrix);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_modulate_opacity(rive_rs_webgpu_renderer* renderer,
+                                                        float opacity)
+{
+    return renderer_modulate_opacity_impl(renderer, opacity);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_align(rive_rs_webgpu_renderer* renderer,
+                                             rive_rs_fit fit,
+                                             rive_rs_alignment alignment,
+                                             const rive_rs_aabb* frame,
+                                             const rive_rs_aabb* content,
+                                             float scale_factor)
+{
+    return renderer_align_impl(renderer, fit, alignment, frame, content, scale_factor);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_save_clip_rect(rive_rs_webgpu_renderer* renderer,
+                                                      float left,
+                                                      float top,
+                                                      float right,
+                                                      float bottom)
+{
+    return renderer_save_clip_rect_impl(renderer, left, top, right, bottom);
+}
+
+rive_rs_status rive_rs_webgpu_renderer_restore_clip_rect(rive_rs_webgpu_renderer* renderer)
+{
+    return renderer_restore_clip_rect_impl(renderer);
 }
 
 void rive_rs_bindable_artboard_ref(rive_rs_bindable_artboard* bindable_artboard)

@@ -35,6 +35,8 @@ typedef struct rive_rs_text_value_run rive_rs_text_value_run;
 typedef struct rive_rs_flattened_path rive_rs_flattened_path;
 
 typedef struct rive_rs_renderer rive_rs_renderer;
+typedef struct rive_rs_webgl2_renderer rive_rs_webgl2_renderer;
+typedef struct rive_rs_webgpu_renderer rive_rs_webgpu_renderer;
 
 typedef struct rive_rs_linear_animation rive_rs_linear_animation;
 typedef struct rive_rs_linear_animation_instance rive_rs_linear_animation_instance;
@@ -179,6 +181,8 @@ typedef struct rive_rs_file_asset_loader_callbacks {
 RIVE_RS_API uint32_t rive_rs_abi_version(void);
 
 RIVE_RS_API rive_rs_factory* rive_rs_factory_default(void);
+RIVE_RS_API rive_rs_factory* rive_rs_factory_webgl2(void);
+RIVE_RS_API rive_rs_factory* rive_rs_factory_webgpu(void);
 RIVE_RS_API void rive_rs_factory_ref(rive_rs_factory* factory);
 RIVE_RS_API void rive_rs_factory_unref(rive_rs_factory* factory);
 
@@ -254,6 +258,12 @@ RIVE_RS_API rive_rs_status rive_rs_artboard_advance(
 RIVE_RS_API rive_rs_status rive_rs_artboard_draw(
     rive_rs_artboard* artboard,
     rive_rs_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_artboard_draw_webgl2(
+    rive_rs_artboard* artboard,
+    rive_rs_webgl2_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_artboard_draw_webgpu(
+    rive_rs_artboard* artboard,
+    rive_rs_webgpu_renderer* renderer);
 RIVE_RS_API bool rive_rs_artboard_did_change(const rive_rs_artboard* artboard);
 RIVE_RS_API rive_rs_str_view rive_rs_artboard_name(const rive_rs_artboard* artboard);
 RIVE_RS_API rive_rs_aabb rive_rs_artboard_bounds(const rive_rs_artboard* artboard);
@@ -358,6 +368,86 @@ RIVE_RS_API rive_rs_status rive_rs_artboard_flatten_path(
 RIVE_RS_API rive_rs_status rive_rs_artboard_bind_view_model_instance(
     rive_rs_artboard* artboard,
     rive_rs_view_model_instance* instance);
+
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_new(
+    int32_t width,
+    int32_t height,
+    rive_rs_webgl2_renderer** out_renderer);
+RIVE_RS_API void rive_rs_webgl2_renderer_delete(
+    rive_rs_webgl2_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_clear(
+    rive_rs_webgl2_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_flush(
+    rive_rs_webgl2_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_resize(
+    rive_rs_webgl2_renderer* renderer,
+    int32_t width,
+    int32_t height);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_save(
+    rive_rs_webgl2_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_restore(
+    rive_rs_webgl2_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_transform(
+    rive_rs_webgl2_renderer* renderer,
+    const rive_rs_mat2d* matrix);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_modulate_opacity(
+    rive_rs_webgl2_renderer* renderer,
+    float opacity);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_align(
+    rive_rs_webgl2_renderer* renderer,
+    rive_rs_fit fit,
+    rive_rs_alignment alignment,
+    const rive_rs_aabb* frame,
+    const rive_rs_aabb* content,
+    float scale_factor);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_save_clip_rect(
+    rive_rs_webgl2_renderer* renderer,
+    float left,
+    float top,
+    float right,
+    float bottom);
+RIVE_RS_API rive_rs_status rive_rs_webgl2_renderer_restore_clip_rect(
+    rive_rs_webgl2_renderer* renderer);
+
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_new(
+    int32_t width,
+    int32_t height,
+    rive_rs_webgpu_renderer** out_renderer);
+RIVE_RS_API void rive_rs_webgpu_renderer_delete(
+    rive_rs_webgpu_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_clear(
+    rive_rs_webgpu_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_flush(
+    rive_rs_webgpu_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_resize(
+    rive_rs_webgpu_renderer* renderer,
+    int32_t width,
+    int32_t height);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_save(
+    rive_rs_webgpu_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_restore(
+    rive_rs_webgpu_renderer* renderer);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_transform(
+    rive_rs_webgpu_renderer* renderer,
+    const rive_rs_mat2d* matrix);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_modulate_opacity(
+    rive_rs_webgpu_renderer* renderer,
+    float opacity);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_align(
+    rive_rs_webgpu_renderer* renderer,
+    rive_rs_fit fit,
+    rive_rs_alignment alignment,
+    const rive_rs_aabb* frame,
+    const rive_rs_aabb* content,
+    float scale_factor);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_save_clip_rect(
+    rive_rs_webgpu_renderer* renderer,
+    float left,
+    float top,
+    float right,
+    float bottom);
+RIVE_RS_API rive_rs_status rive_rs_webgpu_renderer_restore_clip_rect(
+    rive_rs_webgpu_renderer* renderer);
 RIVE_RS_API void rive_rs_bindable_artboard_ref(rive_rs_bindable_artboard* bindable_artboard);
 RIVE_RS_API void rive_rs_bindable_artboard_unref(rive_rs_bindable_artboard* bindable_artboard);
 
