@@ -1,6 +1,7 @@
-# rive-rs Core Parity Checklist
+# rive-rs Parity Checklist
 
-This tracks parity against non-renderer surfaces in `wasm/src/bindings.cpp`.
+This tracks parity against required surfaces from `wasm/src/bindings.cpp` and
+`wasm/src/bindings_webgl2.cpp`.
 
 - [x] Top-level core helpers (`load`, optional asset loader, `decodeAudio`, `decodeFont`,
       `computeAlignment`, `mapXY`, listener checks)
@@ -17,8 +18,10 @@ This tracks parity against non-renderer surfaces in `wasm/src/bindings.cpp`.
 - [x] View model and view model instance typed/path/list operations
 - [x] File-asset metadata + decode/audio/font attachment hooks
 - [x] File-asset pointer reinterpret helpers (`ptrTo*Asset`)
+- [x] WebGL2/WebGPU renderer lifecycle commands
+- [x] Render-image decode/ref/unref hooks
+- [x] Image asset + view-model image property render-image attachment hooks
 
 Out of scope for `rive-rs`:
 
-- Renderer/WebGL2 APIs (`bindings_webgl2.cpp`, render-image attachment flows)
 - `DynamicRectanizer`

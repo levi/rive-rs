@@ -940,7 +940,8 @@ impl WebGl2Renderer {
 
     pub fn modulate_opacity(&mut self, opacity: f32) -> Result<(), Error> {
         // SAFETY: valid handle.
-        let status = unsafe { abi::rive_rs_webgl2_renderer_modulate_opacity(self.as_raw(), opacity) };
+        let status =
+            unsafe { abi::rive_rs_webgl2_renderer_modulate_opacity(self.as_raw(), opacity) };
         status_result(status)
     }
 
@@ -1051,7 +1052,8 @@ impl WebGpuRenderer {
 
     pub fn modulate_opacity(&mut self, opacity: f32) -> Result<(), Error> {
         // SAFETY: valid handle.
-        let status = unsafe { abi::rive_rs_webgpu_renderer_modulate_opacity(self.as_raw(), opacity) };
+        let status =
+            unsafe { abi::rive_rs_webgpu_renderer_modulate_opacity(self.as_raw(), opacity) };
         status_result(status)
     }
 
@@ -1860,6 +1862,25 @@ impl ViewModelInstance {
         };
         status_result(status)
     }
+
+    pub fn set_image(&mut self, path: &str, value: Option<&RenderImage>) -> Result<(), Error> {
+        let raw = value.map_or(ptr::null_mut(), |image| image.as_raw());
+        // SAFETY: valid handles and path view.
+        let status = unsafe {
+            abi::rive_rs_view_model_instance_set_image(self.as_raw(), str_view(path), raw)
+        };
+        status_result(status)
+    }
+
+    pub fn image(&self, path: &str) -> Result<Option<RenderImage>, Error> {
+        let mut out = ptr::null_mut();
+        // SAFETY: valid handle, path view, and out pointer.
+        let status = unsafe {
+            abi::rive_rs_view_model_instance_get_image(self.as_raw(), str_view(path), &mut out)
+        };
+        status_result(status)?;
+        Ok(NonNull::new(out).map(|raw| RenderImage { raw }))
+    }
 }
 
 impl Clone for ViewModelInstance {
@@ -2453,6 +2474,48 @@ impl FileAsset {
         // SAFETY: valid handles for call duration.
         let status = unsafe { abi::rive_rs_font_asset_set_font(self.as_raw(), font.as_raw()) };
         status_result(status)
+    }
+
+    pub fn set_render_image(&mut self, image: Option<&RenderImage>) -> Result<(), Error> {
+        let raw = image.map_or(ptr::null_mut(), |value| value.as_raw());
+        // SAFETY: valid handles for call duration.
+        let status = unsafe { abi::rive_rs_image_asset_set_render_image(self.as_raw(), raw) };
+        status_result(status)
+    }
+}
+
+pub struct RenderImage {
+    raw: NonNull<abi::rive_rs_render_image>,
+}
+
+impl RenderImage {
+    pub fn decode_webgl2(bytes: &[u8]) -> Result<Self, Error> {
+        let mut out = ptr::null_mut();
+        // SAFETY: pointers are valid for call duration; out pointer is writable.
+        let status = unsafe { abi::rive_rs_decode_webgl2_image(bytes_view(bytes), &mut out) };
+        status_result(status)?;
+        Ok(Self {
+            raw: non_null(out)?,
+        })
+    }
+
+    pub fn as_raw(&self) -> *mut abi::rive_rs_render_image {
+        self.raw.as_ptr()
+    }
+}
+
+impl Clone for RenderImage {
+    fn clone(&self) -> Self {
+        // SAFETY: intrusive ref-count increment on valid handle.
+        unsafe { abi::rive_rs_render_image_ref(self.as_raw()) };
+        Self { raw: self.raw }
+    }
+}
+
+impl Drop for RenderImage {
+    fn drop(&mut self) {
+        // SAFETY: intrusive ref-count decrement on valid handle.
+        unsafe { abi::rive_rs_render_image_unref(self.as_raw()) };
     }
 }
 

@@ -54,6 +54,18 @@
 #include "rive/viewmodel/runtime/viewmodel_instance_trigger_runtime.hpp"
 #include "rive/viewmodel/runtime/viewmodel_instance_value_runtime.hpp"
 #include "rive/viewmodel/runtime/viewmodel_runtime.hpp"
+#include "rive/viewmodel/viewmodel_instance_asset_image.hpp"
+
+#ifdef __EMSCRIPTEN__
+#include "rive/renderer/gl/render_context_gl_impl.hpp"
+#include "rive/renderer/gl/render_target_gl.hpp"
+#include "rive/renderer/rive_render_factory.hpp"
+#include "rive/renderer/rive_render_image.hpp"
+#include "rive/renderer/rive_renderer.hpp"
+
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#endif
 
 #include <atomic>
 #include <cmath>
@@ -61,15 +73,26 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <map>
+#include <memory>
 #include <new>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
+
+#ifdef __EMSCRIPTEN__
+namespace webgl2_provider
+{
+class Renderer;
+}
+#endif
 
 struct rive_rs_factory
 {
     std::atomic_uint32_t refs;
     rive::Factory* factory;
+    bool owns_factory = true;
 };
 
 struct rive_rs_artboard
@@ -86,7 +109,11 @@ struct rive_rs_webgl2_renderer
     uint32_t save_depth = 0;
     uint32_t clip_depth = 0;
     float opacity = 1.0f;
+#ifdef __EMSCRIPTEN__
+    webgl2_provider::Renderer* renderer = nullptr;
+#else
     rive::NoOpRenderer renderer;
+#endif
 };
 
 struct rive_rs_webgpu_renderer
@@ -99,6 +126,488 @@ struct rive_rs_webgpu_renderer
     float opacity = 1.0f;
     rive::NoOpRenderer renderer;
 };
+
+#ifdef __EMSCRIPTEN__
+namespace webgl2_provider
+{
+using namespace rive;
+using namespace rive::gpu;
+
+class Renderer;
+class WebGl2RenderImage;
+class WebGl2RenderBuffer;
+
+using PLSResourceID = uint64_t;
+static std::atomic<PLSResourceID> s_next_webgl2_buffer_id;
+
+class Factory final : public rive::RiveRenderFactory
+{
+public:
+    static Factory* instance()
+    {
+        static Factory s_factory;
+        return &s_factory;
+    }
+
+    void register_context(Renderer* renderer) { m_renderers.insert(renderer); }
+
+    void unregister_context(Renderer* renderer) { m_renderers.erase(renderer); }
+
+    void on_webgl2_buffer_deleted(WebGl2RenderBuffer* render_buffer);
+
+    rive::rcp<rive::RenderImage> decodeImage(rive::Span<const uint8_t> encoded_bytes) override;
+
+    rive::rcp<rive::RenderBuffer> makeRenderBuffer(rive::RenderBufferType type,
+                                                   rive::RenderBufferFlags flags,
+                                                   size_t size_in_bytes) override;
+
+private:
+    Factory() = default;
+
+    std::set<Renderer*> m_renderers;
+};
+
+class ScopedGLContextMakeCurrent
+{
+public:
+    explicit ScopedGLContextMakeCurrent(EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context_gl) :
+        m_context_gl(context_gl),
+        m_previous_context(emscripten_webgl_get_current_context())
+    {
+        if (m_context_gl != m_previous_context)
+        {
+            emscripten_webgl_make_context_current(m_context_gl);
+        }
+    }
+
+    ~ScopedGLContextMakeCurrent()
+    {
+        if (m_context_gl != m_previous_context)
+        {
+            emscripten_webgl_make_context_current(m_previous_context);
+        }
+    }
+
+private:
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE m_context_gl;
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE m_previous_context;
+};
+
+EM_JS(void,
+      rive_rs_decode_image,
+      (uintptr_t render_image, uintptr_t data_ptr, int data_len),
+      {
+          let images = Module["rive_rs_images"];
+          if (!images) {
+              images = new Map();
+              Module["rive_rs_images"] = images;
+          }
+
+          const image = new Image();
+          images.set(render_image, image);
+
+          // Copy out of WASM memory; Blob cannot use SharedArrayBuffer views.
+          const source = Module["HEAPU8"].subarray(data_ptr, data_ptr + data_len);
+          const bytes = new Uint8Array(data_len);
+          bytes.set(source);
+          image.src = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+          image.onload = function () {
+              Module["_set_webgl2_image_size"](render_image, image.width, image.height);
+          };
+      });
+
+EM_JS(void, rive_rs_upload_image, (EMSCRIPTEN_WEBGL_CONTEXT_HANDLE gl, uintptr_t render_image), {
+    const images = Module["rive_rs_images"];
+    if (!images) {
+        return;
+    }
+
+    const image = images.get(render_image);
+    if (!image) {
+        return;
+    }
+
+    gl = GL.getContext(gl).GLctx;
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+});
+
+EM_JS(void, rive_rs_delete_image, (uintptr_t render_image), {
+    const images = Module["rive_rs_images"];
+    if (!images) {
+        return;
+    }
+    images.delete(render_image);
+});
+
+class WebGl2RenderImage final
+    : public LITE_RTTI_OVERRIDE(RenderImage, WebGl2RenderImage)
+{
+public:
+    explicit WebGl2RenderImage(rive::Span<const uint8_t> encoded_bytes)
+    {
+        ref();
+        rive_rs_decode_image(reinterpret_cast<uintptr_t>(this),
+                             reinterpret_cast<uintptr_t>(encoded_bytes.data()),
+                             static_cast<int>(encoded_bytes.size()));
+    }
+
+    ~WebGl2RenderImage()
+    {
+        ScopedGLContextMakeCurrent make_current(m_context_gl);
+        rive_rs_delete_image(reinterpret_cast<uintptr_t>(this));
+        m_render_image.reset();
+    }
+
+    void set_web_image(int width, int height)
+    {
+        m_width = width;
+        m_height = height;
+        m_ready_to_upload = true;
+        decodedAsync();
+    }
+
+    rive::RenderImage* prep(Renderer* renderer, EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context);
+
+private:
+    bool m_ready_to_upload = false;
+    int m_width = 0;
+    int m_height = 0;
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE m_context_gl = 0;
+    rive::rcp<rive::RiveRenderImage> m_render_image;
+};
+
+class WebGl2BufferData : public rive::RefCnt<WebGl2BufferData>
+{
+public:
+    explicit WebGl2BufferData(size_t size_in_bytes) : m_data(new uint8_t[size_in_bytes]) {}
+
+    const uint8_t* contents() const { return m_data.get(); }
+
+    uint8_t* writable_address()
+    {
+        ++m_mutation_id;
+        return m_data.get();
+    }
+
+    PLSResourceID mutation_id() const { return m_mutation_id; }
+
+private:
+    std::unique_ptr<uint8_t[]> m_data;
+    PLSResourceID m_mutation_id = 1;
+};
+
+class WebGl2RenderBuffer final
+    : public LITE_RTTI_OVERRIDE(RenderBuffer, WebGl2RenderBuffer)
+{
+public:
+    WebGl2RenderBuffer(rive::RenderBufferType type,
+                       rive::RenderBufferFlags flags,
+                       size_t size_in_bytes) :
+        lite_rtti_override(type, flags, size_in_bytes),
+        m_buffer_data(rive::make_rcp<WebGl2BufferData>(size_in_bytes))
+    {}
+
+    ~WebGl2RenderBuffer() override
+    {
+        Factory::instance()->on_webgl2_buffer_deleted(this);
+    }
+
+    PLSResourceID unique_id() const { return m_unique_id; }
+
+    rive::rcp<WebGl2BufferData> buffer_data() const { return m_buffer_data; }
+
+    void* onMap() override { return m_buffer_data->writable_address(); }
+
+    void onUnmap() override {}
+
+private:
+    PLSResourceID m_unique_id = ++s_next_webgl2_buffer_id;
+    rive::rcp<WebGl2BufferData> m_buffer_data;
+};
+
+class PLSSynchronizedBuffer
+{
+public:
+    PLSSynchronizedBuffer(Renderer* renderer, WebGl2RenderBuffer* webgl_buffer);
+
+    ~PLSSynchronizedBuffer()
+    {
+        ScopedGLContextMakeCurrent make_current(m_context_gl);
+        m_render_buffer.reset();
+    }
+
+    rive::rcp<rive::RenderBuffer> get()
+    {
+        if (m_mutation_id != m_webgl_buffer_data->mutation_id())
+        {
+            ScopedGLContextMakeCurrent make_current(m_context_gl);
+            void* contents = m_render_buffer->map();
+            memcpy(contents, m_webgl_buffer_data->contents(), m_render_buffer->sizeInBytes());
+            m_mutation_id = m_webgl_buffer_data->mutation_id();
+            m_render_buffer->unmap();
+        }
+        return m_render_buffer;
+    }
+
+private:
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE m_context_gl;
+    rive::rcp<WebGl2BufferData> m_webgl_buffer_data;
+    rive::rcp<rive::RenderBuffer> m_render_buffer;
+    PLSResourceID m_mutation_id = 0;
+};
+
+class Renderer final : public rive::RiveRenderer
+{
+public:
+    Renderer(std::unique_ptr<rive::gpu::RenderContext> render_context,
+             int32_t width,
+             int32_t height) :
+        rive::RiveRenderer(render_context.get()),
+        m_render_context(std::move(render_context))
+    {
+        resize(width, height);
+    }
+
+    ~Renderer() override
+    {
+        ScopedGLContextMakeCurrent make_current(m_context_gl);
+        m_pls_synchronized_buffers.clear();
+        m_render_target = nullptr;
+        m_render_context = nullptr;
+    }
+
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context_gl() const { return m_context_gl; }
+
+    rive::gpu::RenderContextGLImpl* render_context_gl() const
+    {
+        return m_render_context->static_impl_cast<rive::gpu::RenderContextGLImpl>();
+    }
+
+    void resize(int32_t width, int32_t height)
+    {
+        ScopedGLContextMakeCurrent make_current(m_context_gl);
+        GLint sample_count = 1;
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glGetIntegerv(GL_SAMPLES, &sample_count);
+        m_render_target =
+            rive::make_rcp<rive::gpu::FramebufferRenderTargetGL>(width, height, 0, sample_count);
+    }
+
+    void clear()
+    {
+        rive::gpu::RenderContext::FrameDescriptor descriptor = {
+            .renderTargetWidth = m_render_target->width(),
+            .renderTargetHeight = m_render_target->height(),
+            .loadAction = rive::gpu::LoadAction::clear,
+            .clearColor = 0,
+        };
+        if (m_render_target->sampleCount() > 1)
+        {
+            descriptor.msaaSampleCount = m_render_target->sampleCount();
+        }
+        else if (!m_render_context->platformFeatures().supportsRasterOrderingMode &&
+                 !m_render_context->platformFeatures().supportsAtomicMode)
+        {
+            descriptor.msaaSampleCount = 4;
+        }
+        m_render_context->beginFrame(std::move(descriptor));
+    }
+
+    void save_clip_rect(float left, float top, float right, float bottom)
+    {
+        save();
+        rive::rcp<rive::RenderPath> rect(Factory::instance()->makeEmptyRenderPath());
+        rect->moveTo(left, top);
+        rect->lineTo(right, top);
+        rect->lineTo(right, bottom);
+        rect->lineTo(left, bottom);
+        rect->close();
+        clipPath(rect.get());
+    }
+
+    void restore_clip_rect() { restore(); }
+
+    void drawImage(const rive::RenderImage* render_image,
+                   const rive::ImageSampler image_sampler,
+                   rive::BlendMode blend_mode,
+                   float opacity) override
+    {
+        LITE_RTTI_CAST_OR_RETURN(webgl_render_image, const WebGl2RenderImage*, render_image);
+        render_image =
+            const_cast<WebGl2RenderImage*>(webgl_render_image)->prep(this, m_context_gl);
+        if (render_image != nullptr)
+        {
+            rive::RiveRenderer::drawImage(render_image, image_sampler, blend_mode, opacity);
+        }
+    }
+
+    void drawImageMesh(const rive::RenderImage* render_image,
+                       const rive::ImageSampler image_sampler,
+                       rive::rcp<rive::RenderBuffer> vertices_f32,
+                       rive::rcp<rive::RenderBuffer> uv_coords_f32,
+                       rive::rcp<rive::RenderBuffer> indices_u16,
+                       uint32_t vertex_count,
+                       uint32_t index_count,
+                       rive::BlendMode blend_mode,
+                       float opacity) override
+    {
+        LITE_RTTI_CAST_OR_RETURN(webgl_render_image, const WebGl2RenderImage*, render_image);
+        render_image =
+            const_cast<WebGl2RenderImage*>(webgl_render_image)->prep(this, m_context_gl);
+        if (render_image != nullptr)
+        {
+            LITE_RTTI_CAST_OR_RETURN(vertex_buffer, WebGl2RenderBuffer*, vertices_f32.get());
+            LITE_RTTI_CAST_OR_RETURN(uv_buffer, WebGl2RenderBuffer*, uv_coords_f32.get());
+            LITE_RTTI_CAST_OR_RETURN(index_buffer, WebGl2RenderBuffer*, indices_u16.get());
+            rive::RiveRenderer::drawImageMesh(render_image,
+                                              image_sampler,
+                                              ref_pls_buffer(vertex_buffer),
+                                              ref_pls_buffer(uv_buffer),
+                                              ref_pls_buffer(index_buffer),
+                                              vertex_count,
+                                              index_count,
+                                              blend_mode,
+                                              opacity);
+        }
+    }
+
+    void flush()
+    {
+        ScopedGLContextMakeCurrent make_current(m_context_gl);
+        m_render_context->flush({.renderTarget = m_render_target.get()});
+    }
+
+    void on_webgl2_buffer_deleted(PLSResourceID webgl_buffer_id)
+    {
+        m_pls_synchronized_buffers.erase(webgl_buffer_id);
+    }
+
+private:
+    rive::rcp<rive::RenderBuffer> ref_pls_buffer(WebGl2RenderBuffer* webgl_buffer)
+    {
+        PLSSynchronizedBuffer& synchronized_buffer =
+            m_pls_synchronized_buffers
+                .try_emplace(webgl_buffer->unique_id(), this, webgl_buffer)
+                .first->second;
+        return synchronized_buffer.get();
+    }
+
+    EMSCRIPTEN_WEBGL_CONTEXT_HANDLE m_context_gl = emscripten_webgl_get_current_context();
+    std::unique_ptr<rive::gpu::RenderContext> m_render_context;
+    rive::rcp<rive::gpu::FramebufferRenderTargetGL> m_render_target;
+    std::map<PLSResourceID, PLSSynchronizedBuffer> m_pls_synchronized_buffers;
+};
+
+inline Renderer* make_renderer(int32_t width, int32_t height)
+{
+    auto render_context = rive::gpu::RenderContextGLImpl::MakeContext();
+    if (render_context == nullptr)
+    {
+        return nullptr;
+    }
+    auto* renderer = new (std::nothrow) Renderer(std::move(render_context), width, height);
+    if (renderer != nullptr)
+    {
+        Factory::instance()->register_context(renderer);
+    }
+    return renderer;
+}
+
+inline void delete_renderer(Renderer* renderer)
+{
+    if (renderer == nullptr)
+    {
+        return;
+    }
+    Factory::instance()->unregister_context(renderer);
+    delete renderer;
+}
+
+inline rive::Factory* factory_instance()
+{
+    return Factory::instance();
+}
+
+inline void set_web_image_size(WebGl2RenderImage* render_image, int width, int height)
+{
+    if (render_image == nullptr)
+    {
+        return;
+    }
+    render_image->set_web_image(width, height);
+    render_image->unref();
+}
+
+inline rive::Renderer* as_renderer(Renderer* renderer)
+{
+    return renderer;
+}
+
+rive::RenderImage* WebGl2RenderImage::prep(Renderer* renderer,
+                                           EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context)
+{
+    if (context == m_context_gl && m_render_image != nullptr)
+    {
+        return m_render_image.get();
+    }
+    if (!m_ready_to_upload)
+    {
+        return m_render_image.get();
+    }
+
+    ScopedGLContextMakeCurrent make_current(m_context_gl = context);
+    GLuint texture_id = 0;
+    glGenTextures(1, &texture_id);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture_id);
+    renderer->render_context_gl()->state()->bindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    rive_rs_upload_image(emscripten_webgl_get_current_context(),
+                         reinterpret_cast<uintptr_t>(this));
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    m_render_image = rive::make_rcp<rive::RiveRenderImage>(
+        renderer->render_context_gl()->adoptImageTexture(m_width, m_height, texture_id));
+    return m_render_image.get();
+}
+
+PLSSynchronizedBuffer::PLSSynchronizedBuffer(Renderer* renderer,
+                                             WebGl2RenderBuffer* webgl_buffer) :
+    m_context_gl(renderer->context_gl()),
+    m_webgl_buffer_data(webgl_buffer->buffer_data())
+{
+    ScopedGLContextMakeCurrent make_current(m_context_gl);
+    m_render_buffer =
+        renderer->render_context_gl()->makeRenderBuffer(webgl_buffer->type(),
+                                                        webgl_buffer->flags(),
+                                                        webgl_buffer->sizeInBytes());
+}
+
+rive::rcp<rive::RenderImage> Factory::decodeImage(rive::Span<const uint8_t> encoded_bytes)
+{
+    return rive::make_rcp<WebGl2RenderImage>(encoded_bytes);
+}
+
+rive::rcp<rive::RenderBuffer> Factory::makeRenderBuffer(rive::RenderBufferType type,
+                                                        rive::RenderBufferFlags flags,
+                                                        size_t size_in_bytes)
+{
+    return rive::make_rcp<WebGl2RenderBuffer>(type, flags, size_in_bytes);
+}
+
+void Factory::on_webgl2_buffer_deleted(WebGl2RenderBuffer* render_buffer)
+{
+    for (Renderer* renderer : m_renderers)
+    {
+        renderer->on_webgl2_buffer_deleted(render_buffer->unique_id());
+    }
+}
+} // namespace webgl2_provider
+#endif
 
 namespace
 {
@@ -207,7 +716,10 @@ inline void factory_unref_internal(rive_rs_factory* factory)
     }
     if (factory->refs.fetch_sub(1, std::memory_order_acq_rel) == 1)
     {
-        delete factory->factory;
+        if (factory->owns_factory)
+        {
+            delete factory->factory;
+        }
         delete factory;
     }
 }
@@ -230,6 +742,17 @@ inline rive::ArtboardInstance* as_artboard(rive_rs_artboard* artboard)
 inline rive::ArtboardInstance* as_artboard(const rive_rs_artboard* artboard)
 {
     return artboard == nullptr ? nullptr : artboard->artboard.get();
+}
+
+inline rive::Renderer* as_webgl2_renderer(rive_rs_webgl2_renderer* renderer)
+{
+#ifdef __EMSCRIPTEN__
+    return renderer == nullptr || renderer->renderer == nullptr
+               ? nullptr
+               : webgl2_provider::as_renderer(renderer->renderer);
+#else
+    return renderer == nullptr ? nullptr : &renderer->renderer;
+#endif
 }
 
 inline rive::File* as_file(rive_rs_file* file)
@@ -442,6 +965,16 @@ inline rive::Font* as_font(rive_rs_font* font)
 inline const rive::Font* as_font(const rive_rs_font* font)
 {
     return reinterpret_cast<const rive::Font*>(font);
+}
+
+inline rive::RenderImage* as_render_image(rive_rs_render_image* image)
+{
+    return reinterpret_cast<rive::RenderImage*>(image);
+}
+
+inline const rive::RenderImage* as_render_image(const rive_rs_render_image* image)
+{
+    return reinterpret_cast<const rive::RenderImage*>(image);
 }
 
 #ifdef ENABLE_QUERY_FLAT_VERTICES
@@ -1075,6 +1608,16 @@ private:
 
 extern "C"
 {
+#ifdef __EMSCRIPTEN__
+EMSCRIPTEN_KEEPALIVE void set_webgl2_image_size(
+    webgl2_provider::WebGl2RenderImage* render_image,
+    int width,
+    int height)
+{
+    webgl2_provider::set_web_image_size(render_image, width, height);
+}
+#endif
+
 uint32_t rive_rs_abi_version(void) { return 1; }
 
 rive_rs_factory* rive_rs_factory_default(void)
@@ -1094,12 +1637,25 @@ rive_rs_factory* rive_rs_factory_default(void)
 
     handle->refs.store(1, std::memory_order_relaxed);
     handle->factory = factory;
+    handle->owns_factory = true;
     return handle;
 }
 
 rive_rs_factory* rive_rs_factory_webgl2(void)
 {
+#ifdef __EMSCRIPTEN__
+    auto* handle = new (std::nothrow) rive_rs_factory();
+    if (handle == nullptr)
+    {
+        return nullptr;
+    }
+    handle->refs.store(1, std::memory_order_relaxed);
+    handle->factory = webgl2_provider::factory_instance();
+    handle->owns_factory = false;
+    return handle;
+#else
     return rive_rs_factory_default();
+#endif
 }
 
 rive_rs_factory* rive_rs_factory_webgpu(void)
@@ -1631,7 +2187,12 @@ rive_rs_status rive_rs_artboard_draw_webgl2(rive_rs_artboard* artboard,
     {
         return RIVE_RS_STATUS_NULL;
     }
-    as_artboard(artboard)->draw(&renderer->renderer);
+    auto* runtime_renderer = as_webgl2_renderer(renderer);
+    if (runtime_renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    as_artboard(artboard)->draw(runtime_renderer);
     return RIVE_RS_STATUS_OK;
 }
 
@@ -2195,51 +2756,182 @@ rive_rs_status rive_rs_webgl2_renderer_new(int32_t width,
                                            int32_t height,
                                            rive_rs_webgl2_renderer** out_renderer)
 {
-    return renderer_new_impl(width, height, out_renderer);
+    if (out_renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    *out_renderer = nullptr;
+    if (width <= 0 || height <= 0)
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+
+    auto* renderer = new (std::nothrow) rive_rs_webgl2_renderer();
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+
+    renderer->width = width;
+    renderer->height = height;
+#ifdef __EMSCRIPTEN__
+    renderer->renderer = webgl2_provider::make_renderer(width, height);
+    if (renderer->renderer == nullptr)
+    {
+        delete renderer;
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+#endif
+    *out_renderer = renderer;
+    return RIVE_RS_STATUS_OK;
 }
 
 void rive_rs_webgl2_renderer_delete(rive_rs_webgl2_renderer* renderer)
 {
+    if (renderer == nullptr)
+    {
+        return;
+    }
+#ifdef __EMSCRIPTEN__
+    webgl2_provider::delete_renderer(renderer->renderer);
+    renderer->renderer = nullptr;
+#endif
     delete renderer;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_clear(rive_rs_webgl2_renderer* renderer)
 {
-    return renderer_clear_impl(renderer);
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->clear();
+#endif
+    renderer->frame_id++;
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_flush(rive_rs_webgl2_renderer* renderer)
 {
-    return renderer_flush_impl(renderer);
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->flush();
+#endif
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_resize(rive_rs_webgl2_renderer* renderer,
                                               int32_t width,
                                               int32_t height)
 {
-    return renderer_resize_impl(renderer, width, height);
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (width <= 0 || height <= 0)
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->resize(width, height);
+#endif
+    renderer->width = width;
+    renderer->height = height;
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_save(rive_rs_webgl2_renderer* renderer)
 {
-    return renderer_save_impl(renderer);
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->save();
+#endif
+    renderer->save_depth++;
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_restore(rive_rs_webgl2_renderer* renderer)
 {
-    return renderer_restore_impl(renderer);
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (renderer->save_depth == 0)
+    {
+        return RIVE_RS_STATUS_OUT_OF_RANGE;
+    }
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->restore();
+#endif
+    renderer->save_depth--;
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_transform(rive_rs_webgl2_renderer* renderer,
                                                  const rive_rs_mat2d* matrix)
 {
-    return renderer_transform_impl(renderer, matrix);
+    if (renderer == nullptr || matrix == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->transform(
+        rive::Mat2D(matrix->xx, matrix->xy, matrix->yx, matrix->yy, matrix->tx, matrix->ty));
+#endif
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_modulate_opacity(rive_rs_webgl2_renderer* renderer,
                                                         float opacity)
 {
-    return renderer_modulate_opacity_impl(renderer, opacity);
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (!std::isfinite(opacity))
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->modulateOpacity(opacity);
+#endif
+    renderer->opacity = std::fmax(0.0f, std::fmin(1.0f, renderer->opacity * opacity));
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_align(rive_rs_webgl2_renderer* renderer,
@@ -2249,7 +2941,35 @@ rive_rs_status rive_rs_webgl2_renderer_align(rive_rs_webgl2_renderer* renderer,
                                              const rive_rs_aabb* content,
                                              float scale_factor)
 {
-    return renderer_align_impl(renderer, fit, alignment, frame, content, scale_factor);
+    if (renderer == nullptr || frame == nullptr || content == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (!std::isfinite(scale_factor))
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+
+    rive::Fit runtime_fit;
+    rive::Alignment runtime_alignment;
+    if (!to_runtime_fit(fit, &runtime_fit) ||
+        !to_runtime_alignment(alignment, &runtime_alignment))
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->align(runtime_fit,
+                              runtime_alignment,
+                              to_runtime_aabb(*frame),
+                              to_runtime_aabb(*content),
+                              scale_factor);
+#endif
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_save_clip_rect(rive_rs_webgl2_renderer* renderer,
@@ -2258,12 +2978,51 @@ rive_rs_status rive_rs_webgl2_renderer_save_clip_rect(rive_rs_webgl2_renderer* r
                                                       float right,
                                                       float bottom)
 {
-    return renderer_save_clip_rect_impl(renderer, left, top, right, bottom);
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (!std::isfinite(left) || !std::isfinite(top) || !std::isfinite(right) ||
+        !std::isfinite(bottom))
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->save_clip_rect(left, top, right, bottom);
+#endif
+    renderer->save_depth++;
+    renderer->clip_depth++;
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgl2_renderer_restore_clip_rect(rive_rs_webgl2_renderer* renderer)
 {
-    return renderer_restore_clip_rect_impl(renderer);
+    if (renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+    if (renderer->clip_depth == 0)
+    {
+        return RIVE_RS_STATUS_OUT_OF_RANGE;
+    }
+    if (renderer->save_depth == 0)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+#ifdef __EMSCRIPTEN__
+    if (renderer->renderer == nullptr)
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+    renderer->renderer->restore_clip_rect();
+#endif
+    renderer->clip_depth--;
+    renderer->save_depth--;
+    return RIVE_RS_STATUS_OK;
 }
 
 rive_rs_status rive_rs_webgpu_renderer_new(int32_t width,
@@ -4023,6 +4782,59 @@ rive_rs_status rive_rs_view_model_instance_set_artboard_view_model(
     return RIVE_RS_STATUS_OK;
 }
 
+rive_rs_status rive_rs_view_model_instance_set_image(rive_rs_view_model_instance* instance,
+                                                      rive_rs_str_view path,
+                                                      rive_rs_render_image* value)
+{
+    if (instance == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+
+    auto* property = as_view_model_instance(instance)->propertyImage(from_str_view(path));
+    if (property == nullptr)
+    {
+        return RIVE_RS_STATUS_NOT_FOUND;
+    }
+
+    property->value(as_render_image(value));
+    return RIVE_RS_STATUS_OK;
+}
+
+rive_rs_status rive_rs_view_model_instance_get_image(const rive_rs_view_model_instance* instance,
+                                                      rive_rs_str_view path,
+                                                      rive_rs_render_image** out_value)
+{
+    if (instance == nullptr || out_value == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+
+    *out_value = nullptr;
+    auto* property = as_view_model_instance(instance)->propertyImage(from_str_view(path));
+    if (property == nullptr)
+    {
+        return RIVE_RS_STATUS_NOT_FOUND;
+    }
+
+    auto* value = property->viewModelInstanceValue();
+    if (value == nullptr || !value->is<rive::ViewModelInstanceAssetImage>())
+    {
+        return RIVE_RS_STATUS_RUNTIME_ERROR;
+    }
+
+    auto asset = value->as<rive::ViewModelInstanceAssetImage>()->asset();
+    if (asset == nullptr || asset->renderImage() == nullptr)
+    {
+        return RIVE_RS_STATUS_OK;
+    }
+
+    auto* image = asset->renderImage();
+    image->ref();
+    *out_value = reinterpret_cast<rive_rs_render_image*>(image);
+    return RIVE_RS_STATUS_OK;
+}
+
 rive_rs_status rive_rs_compute_alignment(rive_rs_fit fit,
                                          rive_rs_alignment alignment,
                                          const rive_rs_aabb* source,
@@ -4125,6 +4937,35 @@ rive_rs_status rive_rs_decode_font(rive_rs_factory* factory,
     return RIVE_RS_STATUS_OK;
 }
 
+rive_rs_status rive_rs_decode_webgl2_image(rive_rs_bytes_view bytes,
+                                           rive_rs_render_image** out_image)
+{
+    if (out_image == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+
+    *out_image = nullptr;
+    if (invalid_bytes(bytes) || bytes.len == 0)
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+#ifdef __EMSCRIPTEN__
+    auto image = webgl2_provider::Factory::instance()->decodeImage(to_span(bytes));
+    if (image == nullptr)
+    {
+        return RIVE_RS_STATUS_DECODE_ERROR;
+    }
+
+    image->ref();
+    *out_image = reinterpret_cast<rive_rs_render_image*>(image.get());
+    return RIVE_RS_STATUS_OK;
+#else
+    (void)bytes;
+    return RIVE_RS_STATUS_UNSUPPORTED;
+#endif
+}
+
 void rive_rs_audio_source_unref(rive_rs_audio_source* audio)
 {
     if (audio != nullptr)
@@ -4138,6 +4979,22 @@ void rive_rs_font_unref(rive_rs_font* font)
     if (font != nullptr)
     {
         as_font(font)->unref();
+    }
+}
+
+void rive_rs_render_image_ref(rive_rs_render_image* image)
+{
+    if (image != nullptr)
+    {
+        as_render_image(image)->ref();
+    }
+}
+
+void rive_rs_render_image_unref(rive_rs_render_image* image)
+{
+    if (image != nullptr)
+    {
+        as_render_image(image)->unref();
     }
 }
 
@@ -4266,6 +5123,26 @@ rive_rs_status rive_rs_font_asset_set_font(rive_rs_file_asset* asset,
     auto* font_asset = file_asset->as<rive::FontAsset>();
     font_asset->font(font == nullptr ? rive::rcp<rive::Font>(nullptr)
                                      : rive::ref_rcp(as_font(font)));
+    return RIVE_RS_STATUS_OK;
+}
+
+rive_rs_status rive_rs_image_asset_set_render_image(rive_rs_file_asset* asset,
+                                                    rive_rs_render_image* image)
+{
+    if (asset == nullptr)
+    {
+        return RIVE_RS_STATUS_NULL;
+    }
+
+    auto* file_asset = as_file_asset(asset);
+    if (!file_asset->is<rive::ImageAsset>())
+    {
+        return RIVE_RS_STATUS_INVALID_ARGUMENT;
+    }
+
+    auto* image_asset = file_asset->as<rive::ImageAsset>();
+    image_asset->renderImage(image == nullptr ? rive::rcp<rive::RenderImage>(nullptr)
+                                              : rive::ref_rcp(as_render_image(image)));
     return RIVE_RS_STATUS_OK;
 }
 } // extern "C"

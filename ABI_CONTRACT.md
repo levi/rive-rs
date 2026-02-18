@@ -25,22 +25,25 @@ This document records the `rive-runtime` C ABI owned by `rive-rs`.
 - Matrix helper parity (`invert`, `multiply`) in safe Rust
 - Core layout/math helpers (`compute_alignment`, `map_xy`)
 - Audio/font decode and file-asset decode hooks
+- WebGL2/WebGPU renderer lifecycle and draw command APIs
+- WebGL2 render-image decode/ref/unref and image attachment APIs
 - File-asset metadata and pointer reinterpret helpers
 
 ## Explicitly excluded
 
-- Renderer/WebGL2 C ABI (renderer commands, render image, rectanizer)
+- `DynamicRectanizer`
 - JS harness bindings and package/build wiring
-- ABI provider implementations against `rive-runtime`
 
 ## Contract artifacts
 
 - C header: `include/rive_rs_abi.h`
 - Rust mirror: `src/abi.rs`
+- Safe wrappers: `src/runtime.rs`
+- ABI provider implementation: `cpp/provider_core.cpp`
 
 ## Notes
 
-- The contract and safe Rust API now cover the core non-renderer binding
-  surface from `wasm/src/bindings.cpp`.
-- ABI provider implementation against `rive-runtime` is integration work and
-  can be delivered separately.
+- The contract and safe Rust API cover the core `bindings.cpp` runtime surface
+  and the renderer lifecycle surface needed for WebGL2/WebGPU ports.
+- JS API shape remains owned by downstream crates (for example
+  `webgl2-rive-rs`); this contract only defines C ABI and Rust wrappers.

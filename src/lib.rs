@@ -29,6 +29,7 @@ pub use runtime::LinearAnimationInstance;
 pub use runtime::Mat2D;
 pub use runtime::NodeHandle;
 pub use runtime::PropertyInfo;
+pub use runtime::RenderImage;
 pub use runtime::ReportedEvent;
 pub use runtime::RootBoneHandle;
 pub use runtime::SmiBool;

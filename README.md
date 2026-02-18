@@ -6,23 +6,25 @@ It currently contains:
 
 - A core C ABI contract (`include/rive_rs_abi.h`)
 - Rust `extern "C"` declarations (`src/abi.rs`)
-- A safe Rust wrapper layer for core runtime types (`src/runtime.rs`)
+- A safe Rust wrapper layer for runtime and renderer-handle types (`src/runtime.rs`)
 
 ## Scope
 
-`rive-rs` owns **core runtime surfaces only**:
+`rive-rs` owns the ABI boundary to `rive-runtime`:
 
 - file/artboard/animation/state-machine primitives
+- WebGL2/WebGPU renderer lifecycle APIs
+- render-image decode/ref/attach hooks
 - core math/layout helpers
 - audio/font decode primitives
 
-Renderer-facing APIs are intentionally out of scope and are owned by renderer crates,
-starting with `webgl2-rive-rs`.
+Higher-level JS API shape and package integration remain owned by renderer crates
+(for example `webgl2-rive-rs`).
 
 ## Current phase
 
 - Core `bindings.cpp` runtime-surface parity completed at the contract level
-- Safe Rust wrapper parity completed for the same core surface area
+- Renderer lifecycle + render-image ABI surface in place for Rust-only WebGL2 flows
 - Runtime ABI provider implementation now lives in this repo behind
   `runtime-abi-provider`
 

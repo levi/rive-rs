@@ -50,6 +50,7 @@ typedef struct rive_rs_smi_trigger rive_rs_smi_trigger;
 typedef struct rive_rs_file_asset rive_rs_file_asset;
 typedef struct rive_rs_audio_source rive_rs_audio_source;
 typedef struct rive_rs_font rive_rs_font;
+typedef struct rive_rs_render_image rive_rs_render_image;
 
 typedef enum rive_rs_status {
   RIVE_RS_STATUS_OK = 0,
@@ -788,6 +789,14 @@ RIVE_RS_API rive_rs_status rive_rs_view_model_instance_set_artboard_view_model(
     rive_rs_view_model_instance* instance,
     rive_rs_str_view path,
     rive_rs_view_model_instance* view_model_instance);
+RIVE_RS_API rive_rs_status rive_rs_view_model_instance_set_image(
+    rive_rs_view_model_instance* instance,
+    rive_rs_str_view path,
+    rive_rs_render_image* value);
+RIVE_RS_API rive_rs_status rive_rs_view_model_instance_get_image(
+    const rive_rs_view_model_instance* instance,
+    rive_rs_str_view path,
+    rive_rs_render_image** out_value);
 
 RIVE_RS_API rive_rs_status rive_rs_compute_alignment(
     rive_rs_fit fit,
@@ -809,8 +818,13 @@ RIVE_RS_API rive_rs_status rive_rs_decode_font(
     rive_rs_factory* factory,
     rive_rs_bytes_view bytes,
     rive_rs_font** out_font);
+RIVE_RS_API rive_rs_status rive_rs_decode_webgl2_image(
+    rive_rs_bytes_view bytes,
+    rive_rs_render_image** out_image);
 RIVE_RS_API void rive_rs_audio_source_unref(rive_rs_audio_source* audio);
 RIVE_RS_API void rive_rs_font_unref(rive_rs_font* font);
+RIVE_RS_API void rive_rs_render_image_ref(rive_rs_render_image* image);
+RIVE_RS_API void rive_rs_render_image_unref(rive_rs_render_image* image);
 
 RIVE_RS_API rive_rs_file_asset* rive_rs_ptr_to_file_asset(uintptr_t pointer);
 RIVE_RS_API rive_rs_file_asset* rive_rs_ptr_to_audio_asset(uintptr_t pointer);
@@ -839,6 +853,9 @@ RIVE_RS_API rive_rs_status rive_rs_audio_asset_set_audio_source(
 RIVE_RS_API rive_rs_status rive_rs_font_asset_set_font(
     rive_rs_file_asset* asset,
     rive_rs_font* font);
+RIVE_RS_API rive_rs_status rive_rs_image_asset_set_render_image(
+    rive_rs_file_asset* asset,
+    rive_rs_render_image* image);
 
 #ifdef __cplusplus
 }

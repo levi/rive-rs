@@ -113,6 +113,10 @@ pub struct rive_rs_audio_source {
 pub struct rive_rs_font {
     _private: [u8; 0],
 }
+#[repr(C)]
+pub struct rive_rs_render_image {
+    _private: [u8; 0],
+}
 
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -1004,6 +1008,16 @@ unsafe extern "C" {
         path: rive_rs_str_view,
         view_model_instance: *mut rive_rs_view_model_instance,
     ) -> rive_rs_status;
+    pub fn rive_rs_view_model_instance_set_image(
+        instance: *mut rive_rs_view_model_instance,
+        path: rive_rs_str_view,
+        value: *mut rive_rs_render_image,
+    ) -> rive_rs_status;
+    pub fn rive_rs_view_model_instance_get_image(
+        instance: *const rive_rs_view_model_instance,
+        path: rive_rs_str_view,
+        out_value: *mut *mut rive_rs_render_image,
+    ) -> rive_rs_status;
 
     pub fn rive_rs_compute_alignment(
         fit: rive_rs_fit,
@@ -1029,8 +1043,14 @@ unsafe extern "C" {
         bytes: rive_rs_bytes_view,
         out_font: *mut *mut rive_rs_font,
     ) -> rive_rs_status;
+    pub fn rive_rs_decode_webgl2_image(
+        bytes: rive_rs_bytes_view,
+        out_image: *mut *mut rive_rs_render_image,
+    ) -> rive_rs_status;
     pub fn rive_rs_audio_source_unref(audio: *mut rive_rs_audio_source);
     pub fn rive_rs_font_unref(font: *mut rive_rs_font);
+    pub fn rive_rs_render_image_ref(image: *mut rive_rs_render_image);
+    pub fn rive_rs_render_image_unref(image: *mut rive_rs_render_image);
 
     pub fn rive_rs_ptr_to_file_asset(pointer: usize) -> *mut rive_rs_file_asset;
     pub fn rive_rs_ptr_to_audio_asset(pointer: usize) -> *mut rive_rs_file_asset;
@@ -1058,5 +1078,9 @@ unsafe extern "C" {
     pub fn rive_rs_font_asset_set_font(
         asset: *mut rive_rs_file_asset,
         font: *mut rive_rs_font,
+    ) -> rive_rs_status;
+    pub fn rive_rs_image_asset_set_render_image(
+        asset: *mut rive_rs_file_asset,
+        image: *mut rive_rs_render_image,
     ) -> rive_rs_status;
 }
